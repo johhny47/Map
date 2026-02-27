@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Free Map - 24h Storage</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+    <style>
+        #map { height: 500px; width: 100%; }
+    </style>
+</head>
+<body>
+<button id="current-location-btn">Go to My Location</button>
+<h2>Click Map to Add Location</h2>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+const map = L.map('map').setView([23.1736, 449.5189], 10);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+const customIcon = L.icon({
+    iconUrl: 'https://cdn-icons-png.flaticon.com/512/684/684908.png',
+    iconSize: [40, 40],
+    iconAnchor: [20, 40],
+    popupAnchor: [0, -40]
+});
+
+let userLat = null;
+let userLng = null;
+
+// Get user current location
+if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(position => {
+        userLat = position.coords.latitude;
+        userLng = position.coords.longitude;
+
+        // Optional: show user location marker
+        L.circle([userLat, userLng], {
+            radius: 1000,
+            color: 'blue'
+        }).addTo(map).bindPopup("Your 1km Range");
+
+    }, () => {
+        alert("Location permission denied");
+    });
+}
+
+loadSavedLocations();
+
+map.on('click', function(e) {
+    const lat = e.latlng.lat;
+    const lng = e.latlng.lng;
+
+    const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+
+    fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`)
+    .then(res => res.json())
+    .then(data => {
+        const area = data.display_name || "Unknown area";
+
+        // Check if this location already has saved data
+        let locations = JSON.parse(localStorage.getItem("savedLocations")) || [];
+        let saved = locations.find(loc => 
+            Math.abs(loc.lat - lat) < 0.00001 && Math.abs(loc.lng - lng) < 0.00001
+        );
+
+        const savedDescription = saved ? saved.description : "";
+
+        marker.bindPopup(`
+            <strong>${area}</strong><br><br>
+            ${savedDescription ? `<em>Saved: ${savedDescription}</em><br><br>` : ""}
+            <input type="text" id="desc-${lat}" placeholder="Enter description" value="${savedDescription}"><br><br>
+            <button onclick="saveLocation(${lat}, ${lng}, \`${area}\`)">
+                Save
+            </button>
+        `).openPopup();
+    });
+});
+
+function saveLocation(lat, lng, area) {
+
+    if (userLat === null || userLng === null) {
+        alert("User location not available");
+        return;
+    }
+
+    const distance = getDistanceFromLatLonInKm(userLat, userLng, lat, lng);
+
+    if (distance > 1) {
+        alert("You can only add locations within 1 km of your current location.");
+        return;
+    }
+
+    const desc = document.getElementById(`desc-${lat}`).value;
+
+    if (!desc) {
+        alert("Enter description");
+        return;
+    }
+
+    let locations = JSON.parse(localStorage.getItem("savedLocations")) || [];
+
+    locations.push({
+        lat,
+        lng,
+        area,
+        description: desc,
+        timestamp: Date.now()
+    });
+
+    localStorage.setItem("savedLocations", JSON.stringify(locations));
+
+    alert("Location saved (within 1 km)");
+}
+
+// Haversine formula
+function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+
+    const R = 6371; // Radius of earth in km
+    const dLat = deg2rad(lat2 - lat1);
+    const dLon = deg2rad(lon2 - lon1);
+
+    const a =
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c;
+}
+
+function deg2rad(deg) {
+    return deg * (Math.PI/180);
+}
+
+function loadSavedLocations() {
+
+    let locations = JSON.parse(localStorage.getItem("savedLocations")) || [];
+    const now = Date.now();
+    const valid = [];
+
+    locations.forEach(loc => {
+
+        if (now - loc.timestamp < 86400000) {
+
+            valid.push(loc);
+
+            const marker = L.marker([loc.lat, loc.lng], { icon: customIcon }).addTo(map);
+
+            marker.bindPopup(`
+                <strong>${loc.area}</strong><br>
+                ${loc.description}<br>
+                <small>Saved (expires in 24h)</small>
+            `);
+        }
+    });
+
+    localStorage.setItem("savedLocations", JSON.stringify(valid));
+}
+
+document.getElementById("current-location-btn").addEventListener("click", () => {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(position => {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+
+            // Move map to user location
+            map.setView([lat, lng], 15); // zoom 15
+
+            // Optional: show marker
+            L.marker([lat, lng], { icon: customIcon })
+                .addTo(map)
+                .bindPopup("You are here!")
+                .openPopup();
+
+            // Optional: show 1km circle
+            L.circle([lat, lng], {
+                radius: 1000,
+                color: 'blue',
+                fillOpacity: 0.1
+            }).addTo(map);
+
+            // Save user coords globally for distance checks
+            userLat = lat;
+            userLng = lng;
+
+        }, () => {
+            alert("Location permission denied");
+        });
+    } else {
+        alert("Geolocation not supported by your browser");
+    }
+});
+</script>
+</body>
+</html>
